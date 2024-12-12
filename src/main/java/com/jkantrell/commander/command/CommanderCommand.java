@@ -4,7 +4,6 @@ import com.jkantrell.commander.exception.*;
 import org.bukkit.ChatColor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.defaults.BukkitCommand;
-import org.bukkit.permissions.PermissionAttachment;
 
 import java.util.*;
 
