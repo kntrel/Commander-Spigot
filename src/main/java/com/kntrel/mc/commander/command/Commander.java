@@ -3,7 +3,6 @@ package com.kntrel.mc.commander.command;
 import com.kntrel.mc.commander.command.annotations.Command;
 import com.kntrel.mc.commander.command.annotations.Requires;
 import com.kntrel.mc.commander.command.provider.CommandProvider;
-import com.jkantrell.commander.command.provider.builtIn.*;
 import com.kntrel.mc.commander.command.provider.builtIn.*;
 import org.apache.commons.lang3.StringUtils;
 import org.bukkit.Bukkit;
