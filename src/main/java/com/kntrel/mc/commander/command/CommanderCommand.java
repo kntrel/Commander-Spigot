@@ -7,7 +7,7 @@ import org.bukkit.command.defaults.BukkitCommand;
 
 import java.util.*;
 
-class CommanderCommand extends BukkitCommand {
+public class CommanderCommand extends BukkitCommand {
     protected final CommandNode head_;
     private final Commander commander_;
     private final List<String> perms_ = new LinkedList<>();

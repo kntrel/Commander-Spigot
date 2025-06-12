@@ -65,10 +65,10 @@ public class CommandEndpoint {
             CommandProvider<?> provider = null;
             Annotation[] annotations = parameter.getAnnotations();
             if (annotations.length > 0) {
-                provider = this.commander_.getProvider(annotations[annotations.length - 1].annotationType(), parameter.getType());
+                provider = this.commander_.getProvider(annotations[annotations.length - 1].annotationType(), parameter.getType()).orElse(null);
             }
             if (provider == null) {
-                provider = this.commander_.getProvider(null,parameter.getType());
+                provider = this.commander_.getProvider(null,parameter.getType()).orElse(null);
             }
             if (provider == null) {
                 this.commander_.getLogger().severe(

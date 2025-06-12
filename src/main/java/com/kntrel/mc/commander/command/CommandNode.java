@@ -8,7 +8,7 @@ import org.bukkit.command.CommandSender;
 import java.lang.reflect.Method;
 import java.util.*;
 
-class CommandNode {
+public class CommandNode {
 
     //FIELDS
     private final String label_;

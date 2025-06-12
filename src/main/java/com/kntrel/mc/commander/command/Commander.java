@@ -12,7 +12,7 @@ import org.bukkit.command.CommandMap;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
-
+import javax.annotation.Nullable;
 import javax.management.openmbean.KeyAlreadyExistsException;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Constructor;
@@ -20,23 +20,23 @@ import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.*;
-import java.util.function.Predicate;
+import java.util.function.Supplier;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
 public class Commander {
 
     //ASSETS
-    private record ProviderKey(Class<? extends Annotation> annotation, Class<?> toProvide) {}
+    private record ProviderKey(@Nullable Class<? extends Annotation> annotation, Class<?> toProvide) {}
 
     //FIELDS
-    private final HashMap<ProviderKey, Constructor<? extends CommandProvider>> providers_ = new HashMap<>();
+    private final HashMap<ProviderKey, Supplier<? extends CommandProvider<?>>> providerMap_ = new HashMap<>();
     private final JavaPlugin plugin_;
     private final CommandMap commandMap_;
     private final HashMap<String, CommanderCommand> registrationMap_ = new HashMap<>();
     private final Logger logger_;
     private Level logLevel_ = Level.FINEST;
-    private static final Map<Class<?>,Class<?>> primitiveWrappers_ = Map.ofEntries(
+    private static final Map<Class<?>,Class<?>> PRIMITIVE_WRAPPERS = Map.ofEntries(
             Map.entry(int.class,Integer.class),
             Map.entry(long.class,Long.class),
             Map.entry(byte.class,Byte.class),
@@ -48,8 +48,8 @@ public class Commander {
     );
 
     //CONSTRUCTORS
-    public Commander(JavaPlugin mainInstance) {
-        this.plugin_ = mainInstance;
+    public Commander(JavaPlugin plugin) {
+        this.plugin_ = plugin;
         this.logger_ = this.plugin_.getLogger();
         CommandMap commandMap;
         try {
@@ -58,7 +58,7 @@ public class Commander {
             commandMap = (CommandMap) f.get(this.plugin_.getServer());
             this.plugin_.getServer().getPluginManager().registerEvents(new TabListener(this),this.plugin_);
         } catch (NoSuchFieldException | IllegalAccessException e) {
-            e.printStackTrace();
+            this.logger_.warning(e.getMessage());
             commandMap = null;
         }
         this.commandMap_ = commandMap;
@@ -128,70 +128,76 @@ public class Commander {
     }
 
     //PROVIDER HANDLING
-    public <E> void registerProvider(Class<E> target, CommandProvider<E> provider) {
-        this.registerProvider(null,target,provider);
+    public <E> void registerProvider(Class<E> target, Class<? extends CommandProvider<E>> providerClass) {
+        this.registerProvider(null, target, providerClass);
     }
-    public <E> void registerProvider(Class<? extends Annotation> annotation,Class<E> target, CommandProvider<E> provider) {
-        if (this.providers_.keySet().stream().anyMatch(k -> {
-                if (annotation == null) {
-                    return k.annotation == null && k.toProvide.equals(target);
-                }
-                return annotation.equals(k.annotation) && k.toProvide.equals(target);
-        })) {
-            throw new KeyAlreadyExistsException(
-                "There's already a provider registered under such key: [" + annotation.getSimpleName() + " + " + target.getSimpleName() + "]."
-            );
-        }
-        Class<? extends CommandProvider> providerClass = provider.getClass();
+    public <E> void registerProvider(@Nullable Class<? extends Annotation> annotation, Class<E> target, Class<? extends CommandProvider<E>> providerClass) {
+        Constructor<? extends CommandProvider<E>> constructor;
         try {
-            this.providers_.put(new ProviderKey(annotation,target),providerClass.getConstructor());
-        } catch (NoSuchMethodException es) {
-            es.printStackTrace();
-            throw new IllegalArgumentException("'" + providerClass.getSimpleName() + "' must have a no-parameter constructor to be register to a Commander.");
-        }
-    }
-    public <E> CommandProvider<E> getProvider(Class<? extends Annotation> annotation, Class<E> providerType) {
-        Map.Entry<ProviderKey,Constructor<? extends CommandProvider>> entry;
-        boolean repeat = true;
-        Class<E> type = (Class<E>) Commander.primitiveWrappers_.getOrDefault(providerType, providerType);
-        Predicate<ProviderKey> filter = k -> k.toProvide.equals(type);
-
-        while (true) {
-            Predicate<ProviderKey> f = filter;
-            entry = this.providers_.entrySet().stream()
-                    .filter(e -> {
-                        ProviderKey key = e.getKey();
-                        if (annotation == null) {
-                            return key.annotation == null && f.test(key);
-                        }
-                        return annotation.equals(key.annotation) && f.test(key);
-                    })
-                    .findFirst().orElse(null);
-            if (entry == null && repeat) {
-                filter = k -> k.toProvide.isAssignableFrom(type);
-                repeat = false;
-            } else { break; }
-        }
-
-        if (entry == null) {return null;}
-
-        try {
-            return (CommandProvider<E>) entry.getValue().newInstance();
-        } catch (InvocationTargetException | InstantiationException | IllegalAccessException e) {
+            constructor = providerClass.getConstructor();
+        } catch (NoSuchMethodException e) {
             throw new RuntimeException(e);
         }
+        Supplier<? extends CommandProvider<E>> supplier = () -> {
+            try {
+                return constructor.newInstance();
+            } catch (InvocationTargetException | InstantiationException | IllegalAccessException e) {
+                throw new RuntimeException(e);
+            }
+        };
+
+        this.registerProvider(annotation, target, supplier);
+    }
+    public <E> void registerProvider(Class<E> target, Supplier<? extends CommandProvider<E>> providerSupplier) {
+        this.registerProvider(null, target, providerSupplier);
+    }
+
+    @SuppressWarnings("unchecked")
+    public <E> void registerProvider(@Nullable Class<? extends Annotation> annotation, Class<E> target, Supplier<? extends CommandProvider<E>> providerSupplier) {
+        target = (Class<E>) Commander.PRIMITIVE_WRAPPERS.getOrDefault(target, target);
+        ProviderKey key = new ProviderKey(annotation, target);
+
+        if (this.providerMap_.containsKey(key)) {
+            String annotationName = (annotation == null) ? "<null>" : annotation.getSimpleName();
+            throw new KeyAlreadyExistsException(
+                "There's already a provider registered under such key: [" + annotationName + " + " + target.getSimpleName() + "]."
+            );
+        }
+
+        this.providerMap_.put(key, providerSupplier);
+
+    }
+
+    @SuppressWarnings("unchecked")
+    public <E> Optional<CommandProvider<E>> getProvider(@Nullable Class<? extends Annotation> annotation, Class<E> providerType) {
+        providerType = (Class<E>) Commander.PRIMITIVE_WRAPPERS.getOrDefault(providerType, providerType);
+        ProviderKey pKey = new ProviderKey(annotation, providerType);
+        Supplier<? extends CommandProvider<?>> provider = this.providerMap_.get(pKey);
+
+        if (provider != null) {
+            return Optional.of((CommandProvider<E>) provider.get());
+        }
+
+        Class<E> finalProviderType = providerType;
+        return this.providerMap_.entrySet().stream()
+                .filter(e -> {
+                    ProviderKey k = e.getKey();
+                    return Objects.equals(k.annotation(), annotation) && k.toProvide().equals(finalProviderType);
+                })
+                .findFirst()
+                .map(e -> (CommandProvider<E>) e.getValue().get());
     }
 
     //PRIVATE METHODS
     private void registerBuiltInProviders_() {
-        this.registerProvider(Number.class, new NumberProvider());
-        this.registerProvider(Boolean.class, new BooleanProvider());
-        this.registerProvider(Character.class, new CharacterProvider());
-        this.registerProvider(Enum.class, new EnumProvider());
-        this.registerProvider(Player.class, new PlayerProvider());
-        this.registerProvider(Location.class, new LocationProvider());
-        this.registerProvider(World.class, new WorldProvider());
-        this.registerProvider(String.class, new StringProvider());
-        this.registerProvider(CommandSender.class, new SenderProvider());
+        this.registerProvider(Number.class, NumberProvider.class);
+        this.registerProvider(Boolean.class, BooleanProvider.class);
+        this.registerProvider(Character.class, CharacterProvider.class);
+        this.registerProvider(Enum.class, EnumProvider.class);
+        this.registerProvider(Player.class, PlayerProvider.class);
+        this.registerProvider(Location.class, LocationProvider.class);
+        this.registerProvider(World.class, WorldProvider.class);
+        this.registerProvider(String.class, StringProvider.class);
+        this.registerProvider(CommandSender.class, SenderProvider.class);
     }
 }
